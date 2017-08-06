@@ -1080,6 +1080,8 @@
     [enum-set?                                   i]
     [environment                                 i ev]
     [eval                                        i ev se]
+    [show-eval                                   i]
+    [disas                                       i]
     [raise                                       i r ex]
     [raise-continuable                           i r ex]
     [with-exception-handler                      i r ex]
@@ -1595,7 +1597,7 @@
 
 (import (ikarus makefile collections))
 
-(define verbose-output? #f)
+(define verbose-output? #t)
 
 (define debugf
   (if verbose-output?

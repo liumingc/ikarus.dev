@@ -3351,18 +3351,18 @@
   (define (parse-library-name spec)
     (define (parse x)
       (syntax-match x ()
-        (((v* ...)) 
+        [((v* ...)) 
          (for-all 
            (lambda (x) 
              (let ((x (syntax->datum x)))
                (and (integer? x) (exact? x))))
            v*)
-         (values '() (map syntax->datum v*)))
-        ((x . rest) (symbol? (syntax->datum x))
+         (values '() (map syntax->datum v*))]
+        [(x . rest) (symbol? (syntax->datum x))
          (let-values (((x* v*) (parse rest)))
-           (values (cons (syntax->datum x) x*) v*)))
-        (() (values '() '()))
-        (_ (stx-error spec "invalid library name"))))
+           (values (cons (syntax->datum x) x*) v*))]
+        [() (values '() '())]
+        [_ (stx-error spec "invalid library name")]))
     (let-values (((name* ver*) (parse spec)))
       (when (null? name*) (stx-error spec "empty library name"))
       (values name* ver*)))

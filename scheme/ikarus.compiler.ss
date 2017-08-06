@@ -22,7 +22,9 @@
           expand expand/optimize expand/scc-letrec optimizer-output
           cp0-effort-limit cp0-size-limit optimize-level 
           perform-tag-analysis tag-analysis-output
-          strip-source-info generate-debug-calls current-letrec-pass)
+          strip-source-info generate-debug-calls current-letrec-pass
+          show-eval disas
+          )
   (import 
     (rnrs hashtables)
     (ikarus system $fx)
@@ -2227,6 +2229,10 @@
     ($code->closure code)))
 
 (define assembler-output (make-parameter #f))
+(define disas
+  (lambda (x)
+    (parameterize ([assembler-output #t])
+      (eval x (interaction-environment)))))
 
 (define current-core-eval
   (make-parameter
@@ -2236,9 +2242,19 @@
           x
           (die 'current-core-eval "not a procedure" x)))))
 
+(define show-eval
+  (make-parameter #f))
+
 (define eval-core
   (lambda (x) 
-    ((current-core-eval) x)))
+    (if (show-eval)
+        (begin
+          (printf "input: ~a~%" x)
+          (let ([o ((current-core-eval) x)])
+            (printf "output: ~a~%" o)
+            o))
+        ((current-core-eval) x)
+        )))
 
 (include "ikarus.compiler.altcogen.ss")
 
