@@ -23,7 +23,7 @@
           cp0-effort-limit cp0-size-limit optimize-level 
           perform-tag-analysis tag-analysis-output
           strip-source-info generate-debug-calls current-letrec-pass
-          show-eval disas
+          show-eval disas show-passes
           )
   (import 
     (rnrs hashtables)
@@ -356,6 +356,17 @@
       [((primitive make-parameter)) (E-make-parameter mk-call args ctxt)]
       [else
        (let ([names (get-fmls rator args)])
+         #|
+         (if (show-eval)
+             (begin
+               (printf "rator: ")
+               (pretty-print rator)
+               (printf "\nargs: ")
+               (pretty-print args)
+               (printf "\nfmls: ")
+               (pretty-print names)
+               (newline)))
+         |#
          (mk-call 
            (E rator (list ctxt))
            (let f ([args args] [names names])
@@ -2178,27 +2189,64 @@
 (define optimizer-output (make-parameter #f))
 (define perform-tag-analysis (make-parameter #t))
 
+
+(define optimize-inline
+  (lambda (ir)
+    (parameterize ([open-mvcalls #f])
+      (optimize-direct-calls ir))))
+(define optional-tag-analysis
+  (lambda (ir)
+    (if (perform-tag-analysis)
+        (introduce-tags ir)
+        ir)))
+(define source-optimize-x
+  (lambda (ir)
+    (let ([ir (source-optimize ir)])
+      (when (optimizer-output)
+        (pretty-print (unparse-pretty ir)))
+      ir)))
+
+(define show-passes
+  (let ([passes '()])
+    (lambda (op . rands)
+      (case op
+        [(show) '(optimize-inline optimize-letrec source-optimize-x rewrite-assignments
+                  optional-tag-analysis introduce-vars sanitize-bindings
+                  optimize-for-direct-jumps insert-global-assignments
+                  convert-closures optimize-closures/lift-codes)]
+        [(clear) (set! passes '())]
+        [(ls) passes]
+        [(add) (set! passes rands)]))))
+
+(define-syntax run-passes
+  (syntax-rules ()
+    [(_ ir p1 p* ...)
+     (let f ([ir ir] [passes `([p1 . ,p1] [p* . ,p*] ...)])
+       (if (null? passes)
+           ir
+           (let* ([pass (car passes)]
+                  [pass-name (car pass)]
+                  [pass-fun (cdr pass)])
+             (let ([ir (pass-fun ir)])
+               (when (memq pass-name (show-passes 'ls))
+                 (printf "output of pass ~a: ~%" pass-name)
+                 (pretty-print (unparse-pretty ir)))
+               (f ir (cdr passes))))))]))
+
 (define (compile-core-expr->code p)
   (let* ([p (recordize p)]
-         [p (parameterize ([open-mvcalls #f])
-              (optimize-direct-calls p))]
-         [p (optimize-letrec p)]
-         [p (source-optimize p)]
-         [dummy 
-          (begin
-            (when (optimizer-output)
-               (pretty-print (unparse-pretty p)))
-            #f)]
-         [p (rewrite-assignments p)]
-         [p (if (perform-tag-analysis)
-                (introduce-tags p)
-                p)]
-         [p (introduce-vars p)]
-         [p (sanitize-bindings p)]
-         [p (optimize-for-direct-jumps p)]
-         [p (insert-global-assignments p)]
-         [p (convert-closures p)]
-         [p (optimize-closures/lift-codes p)])
+         [p (run-passes p
+              optimize-inline
+              optimize-letrec
+              source-optimize-x
+              rewrite-assignments
+              optional-tag-analysis
+              introduce-vars
+              sanitize-bindings
+              optimize-for-direct-jumps
+              insert-global-assignments
+              convert-closures
+              optimize-closures/lift-codes)])
     (let ([ls* (alt-cogen p)])
       (when (assembler-output)
         (parameterize ([gensym-prefix "L"]
@@ -2249,9 +2297,13 @@
   (lambda (x) 
     (if (show-eval)
         (begin
-          (printf "input: ~a~%" x)
+          (display "input: ")
+          (pretty-print x)
+          (newline)
           (let ([o ((current-core-eval) x)])
-            (printf "output: ~a~%" o)
+            (display "output: ")
+            (pretty-print o)
+            (newline)
             o))
         ((current-core-eval) x)
         )))

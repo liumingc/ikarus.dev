@@ -1082,6 +1082,7 @@
     [eval                                        i ev se]
     [show-eval                                   i]
     [disas                                       i]
+    [show-passes                                 i]
     [raise                                       i r ex]
     [raise-continuable                           i r ex]
     [with-exception-handler                      i r ex]
