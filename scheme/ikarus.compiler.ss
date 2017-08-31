@@ -356,17 +356,6 @@
       [((primitive make-parameter)) (E-make-parameter mk-call args ctxt)]
       [else
        (let ([names (get-fmls rator args)])
-         #|
-         (if (show-eval)
-             (begin
-               (printf "rator: ")
-               (pretty-print rator)
-               (printf "\nargs: ")
-               (pretty-print args)
-               (printf "\nfmls: ")
-               (pretty-print names)
-               (newline)))
-         |#
          (mk-call 
            (E rator (list ctxt))
            (let f ([args args] [names names])
@@ -491,7 +480,11 @@
             (make-primref 'top-level-value) 
             (list (make-constant x)))])]
       [else (error 'recordize "invalid expression" x)]))
-  (E x #f))
+  (let ([ir (E x #f)])
+    (if (show-eval)
+        (pretty-print (unparse ir)))
+    ir))
+  ;(E x #f))
 
 (define (unparse x)
   (define (E-args proper x)
@@ -508,7 +501,10 @@
       [(code-loc x) `(code-loc ,x)]
       [(var x) (string->symbol (format ":~a" x))]
       [(prelex name) (string->symbol (format ":~a" name))]
-      [(primref x) x]
+      #;
+      [(prelex name operand src-ref? src-set? residual-ref? residual-set? loc)
+       (string->symbol (format "prelex:~a.~a" name loc))]
+      [(primref x) `(primref ,x)]
       [(conditional test conseq altern) 
        `(if ,(E test) ,(E conseq) ,(E altern))]
       [(interrupt-call e0 e1)
@@ -608,7 +604,10 @@
   (define h (make-eq-hashtable))
   (define (Var x)
     (or (hashtable-ref h x #f)
-        (let ([v (string->symbol (format "~a_~a" (prelex-name x) n))])
+        (let ([v (string->symbol (format "~a_~a" (if (prelex? x)
+                                                     (prelex-name x)
+                                                     (var-name x))
+                                                     n))])
           (hashtable-set! h x v)
           (set! n (+ n 1))
           v)))
@@ -646,6 +645,7 @@
     (struct-case x
       [(constant c) `(quote ,c)]
       [(prelex) (Var x)]
+      [(var name) name]
       [(primref x) x]
       [(known x t) `(known ,(E x) ,(T:description t))]
       [(conditional test conseq altern) 
@@ -695,6 +695,7 @@
        (let ([rator (E rator)])
          (cons rator (map E rand*)))]
       [(forcall rator rand*) `(foreign-call ,rator . ,(map E rand*))]
+      [(jmpcall label rator rand*) `(jmpcall ,label ,(E rator) . ,(map E rand*))]
       [(assign lhs rhs) `(set! ,(E lhs) ,(E rhs))]
       [(foreign-label x) `(foreign-label ,x)]
       [else x]))
@@ -870,6 +871,19 @@
 (include "ikarus.compiler.optimize-letrec.ss")
 (include "ikarus.compiler.source-optimizer.ss")
 
+
+;;;
+#|
+(let ([x 3] [y 4])
+  (set! x (+ x 1))
+  (list x y))
+=>
+(let ([t 3] [y 4])
+  (let ([x (vector t)])
+    (vector-set! x 0 (+ (vector-ref x 0) 1))
+    (list (vector-ref x 0) y)))
+
+|#
 (define (rewrite-assignments x)
   (define who 'rewrite-assignments)
   (define (fix-lhs* lhs*)
@@ -958,6 +972,8 @@
 
 (include "ikarus.compiler.tag-annotation-analysis.ss")
 
+
+;; prelex -> var
 (define (introduce-vars x)
   (define who 'introduce-vars)
   (define (lookup x)
@@ -1013,6 +1029,16 @@
       [else (error who "invalid expression" (unparse x))]))
   (E x))
 
+#|
+(let ([foo (lambda (x) (+ x 1))]
+      [a 3])
+  (foo 3))
+=>
+
+(let ([a 3])
+  (fix ([foo (lambda (x) (+ x 1))])
+    (foo 3)))
+|#
 (define (sanitize-bindings x)
   (define who 'sanitize-bindings)
   (define (CLambda x)
@@ -2190,7 +2216,7 @@
 (define perform-tag-analysis (make-parameter #t))
 
 
-(define optimize-inline
+(define optimize-direct-calls-x
   (lambda (ir)
     (parameterize ([open-mvcalls #f])
       (optimize-direct-calls ir))))
@@ -2227,6 +2253,9 @@
            (let* ([pass (car passes)]
                   [pass-name (car pass)]
                   [pass-fun (cdr pass)])
+             (when (memq pass-name (show-passes 'ls))
+               (printf "input of pass ~a: ~%" pass-name)
+               (pretty-print (unparse-pretty ir)))
              (let ([ir (pass-fun ir)])
                (when (memq pass-name (show-passes 'ls))
                  (printf "output of pass ~a: ~%" pass-name)
@@ -2236,7 +2265,7 @@
 (define (compile-core-expr->code p)
   (let* ([p (recordize p)]
          [p (run-passes p
-              optimize-inline
+              optimize-direct-calls-x
               optimize-letrec
               source-optimize-x
               rewrite-assignments
