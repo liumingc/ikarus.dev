@@ -1081,6 +1081,8 @@
     [environment                                 i ev]
     [eval                                        i ev se]
     [show-eval                                   i]
+    [show-expand                                 i]
+    [show-codgen                                 i]
     [disas                                       i]
     [show-passes                                 i]
     [raise                                       i r ex]

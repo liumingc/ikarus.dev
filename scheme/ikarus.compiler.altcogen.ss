@@ -35,8 +35,48 @@
 ;;;  <Program> ::= (codes <clambda>* <Expr>)
 
 
-
-
+(define (unparse x)
+  (define (Clambda x)
+    (struct-case x
+      [(clambda label case* cp free*)
+       `(fun ,label ,cp ,(map Expr free*) : ,@(map Case1 case*))]
+      [else (error 'Clambda "invalid expr")]))
+  (define (Case1 x)
+    (struct-case x
+      [(clambda-case info body)
+       `(,@(Info info) -> ,(Expr body))]
+      [else (error 'Case1 "invalid expr")]))
+  (define (Info x)
+    (struct-case x
+      [(case-info label arg* proper) (map Expr arg*)]
+      [else (error 'Info "invalid")]))
+  (define (Expr x)
+    ;;; TODO
+    (struct-case x
+      [(constant c) `(quote ,c)]
+      [(var name) name]
+      [(primref name) `(primref ,name)]
+      [(bind lhs* rhs* expr)
+       `(let ,(map cons (map Expr lhs*) (map Expr rhs*)) ,(Expr expr))]
+      [(fix lhs* rhs* expr)
+       `(fix ,(map cons (map Expr lhs*) (map Expr rhs*)) ,(Expr expr))]
+      [(conditional e0 e1 e2)
+       `(if ,(Expr e0) ,(Expr e1) ,(Expr e2))]
+      [(seq e0 e1)
+       `(seq ,(Expr e0) ,(Expr e1))]
+      [(closure codloc var*)
+       `(closure ,codloc ,(map Expr var*))]
+      [(funcall e0 e*)
+       `(funcall ,(Expr e0) ,@(map Expr e*))]
+      [(jmpcall label e0 e*)
+       `(jmpcall ,label ,(Expr e0) ,@(map Expr e*))]
+      [(primcall name e*)
+       `(primcall ,name ,@(map Expr e*))]
+      [else `(??? ,x)]))
+  (struct-case x
+    [(codes clambda* expr)
+      `(codes ,(map Clambda clambda*) ,(Expr expr))]
+    [else (error 'unparse "invalid expr")]))
 
 (define (introduce-primcalls x)
   ;;;
@@ -2999,6 +3039,10 @@
     (proc))
   (let* ([x (introduce-primcalls x)]
          [x (eliminate-fix x)]
+         [x (begin (if (show-codgen)
+                       (parameterize ([print-gensym 'pretty])
+                         (pretty-print (unparse x))))
+              x)]
          [x (insert-engine-checks x)]
          [x (insert-stack-overflow-check x)]
          [x (specify-representation x)]

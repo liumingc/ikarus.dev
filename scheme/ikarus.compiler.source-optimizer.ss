@@ -748,7 +748,8 @@
              [else #f])]
           [else #f])
         (make-conditional e0 e1 e2)))
-         
+
+  ;;; ctxt ::= v | e | p | app
   (define (E x ctxt env ec sc)
     (decrement ec 1)
     (struct-case x

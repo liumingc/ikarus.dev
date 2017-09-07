@@ -23,7 +23,7 @@
           cp0-effort-limit cp0-size-limit optimize-level 
           perform-tag-analysis tag-analysis-output
           strip-source-info generate-debug-calls current-letrec-pass
-          show-eval disas show-passes
+          show-eval disas show-passes show-codgen
           )
   (import 
     (rnrs hashtables)
@@ -2255,11 +2255,12 @@
                   [pass-fun (cdr pass)])
              (when (memq pass-name (show-passes 'ls))
                (printf "input of pass ~a: ~%" pass-name)
-               (pretty-print (unparse-pretty ir)))
+               (pretty-print (unparse ir)))
              (let ([ir (pass-fun ir)])
                (when (memq pass-name (show-passes 'ls))
                  (printf "output of pass ~a: ~%" pass-name)
-                 (pretty-print (unparse-pretty ir)))
+                 ;(pretty-print (unparse-pretty ir)))
+                 (pretty-print (unparse ir)))
                (f ir (cdr passes))))))]))
 
 (define (compile-core-expr->code p)
@@ -2321,6 +2322,8 @@
 
 (define show-eval
   (make-parameter #f))
+
+(define show-codgen (make-parameter #f))
 
 (define eval-core
   (lambda (x) 
