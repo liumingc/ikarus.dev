@@ -45,6 +45,7 @@
 
 (module (specify-representation)
   (import primops)
+  ;;; PH for prim-handler
   (define-struct PH
     (interruptable? p-handler p-handled? v-handler v-handled? e-handler e-handled?))
   (define interrupt-handler

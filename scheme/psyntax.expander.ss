@@ -33,7 +33,9 @@
           interaction-environment
           ellipsis-map assertion-error 
           environment environment? environment-symbols
-          new-interaction-environment syntax-transpose)
+          new-interaction-environment syntax-transpose
+          show-expand
+          )
   (import
     (except (rnrs)
       environment environment? identifier?
@@ -54,6 +56,8 @@
     (only (rnrs syntax-case) syntax-case syntax with-syntax)
     (prefix (rnrs syntax-case) sys.))
   
+  (define show-expand (make-parameter #f))
+
   (define (set-cons x ls)
     (cond
       ((memq x ls) ls)
@@ -2796,6 +2800,8 @@
 
   (define chi-expr
     (lambda (e r mr)
+      (if (show-expand)
+          (display (format "chi-expr:i: ~a~%" e)))
       (let-values (((type value kwd) (syntax-type e r)))
         (case type
           ((core-macro)

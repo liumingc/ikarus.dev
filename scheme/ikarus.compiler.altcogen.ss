@@ -57,7 +57,7 @@
       [(var name) name]
       [(primref name) `(primref ,name)]
       [(bind lhs* rhs* expr)
-       `(let ,(map cons (map Expr lhs*) (map Expr rhs*)) ,(Expr expr))]
+       `(let ,(map list (map Expr lhs*) (map Expr rhs*)) ,(Expr expr))]
       [(fix lhs* rhs* expr)
        `(fix ,(map cons (map Expr lhs*) (map Expr rhs*)) ,(Expr expr))]
       [(conditional e0 e1 e2)
@@ -72,7 +72,18 @@
        `(jmpcall ,label ,(Expr e0) ,@(map Expr e*))]
       [(primcall name e*)
        `(primcall ,name ,@(map Expr e*))]
-      [else `(??? ,x)]))
+      [(shortcut body handler)
+       `(shortcut ,(Expr body) ,(Expr handler))]
+      [(object x)
+       x]
+      [(closure code free* wk?)
+       `(closure ,(Expr code) ,(map Expr free*) ,wk?)]
+      ;[else `(??? ,x)]))
+      [(locals vars body)
+       `(locals ,(map Expr vars) ,(Expr body))]
+      [(asm-instr op dst src)
+       `(asm-instr ,(Expr op) ,(Expr dst) ,(Expr src))]
+      [else x]))
   (struct-case x
     [(codes clambda* expr)
       `(codes ,(map Clambda clambda*) ,(Expr expr))]
@@ -299,8 +310,8 @@
        (make-clambda L (map CaseExpr cases) cp free name)]))
   (define (CodesExpr x)
     (struct-case x 
-      [(codes list body)
-       (make-codes (map CodeExpr list) (Main body))]))
+      [(codes cls* body)
+       (make-codes (map CodeExpr cls*) (Main body))]))
   (CodesExpr x))
 
 
@@ -3031,26 +3042,46 @@
   (Program x))
 
 (define (print-code x)
-  (parameterize ([print-gensym '#t])
+  (parameterize ([print-gensym 'pretty])
     (pretty-print (unparse x))))
 
 (define (alt-cogen x)
   (define (time-it name proc)
     (proc))
-  (let* ([x (introduce-primcalls x)]
-         [x (eliminate-fix x)]
-         [x (begin (if (show-codgen)
-                       (parameterize ([print-gensym 'pretty])
-                         (pretty-print (unparse x))))
-              x)]
-         [x (insert-engine-checks x)]
-         [x (insert-stack-overflow-check x)]
-         [x (specify-representation x)]
-         [x (impose-calling-convention/evaluation-order x)]
-         [x (time-it "frame" (lambda () (assign-frame-sizes x)))]
-         [x (time-it "register" (lambda () (color-by-chaitin x)))]
-         [ls (flatten-codes x)])
-    ls))
+  (define (run-passes x passes show?)
+    (let loop ([passes passes] [x x])
+      (if (show-codgen)
+          (printf "--->\n"))
+      (if (null? passes)
+          x
+          (let ([pass (car passes)])
+            (when (and show? (show-codgen))
+            ;(when (show-codgen)
+              (printf "In: \n")
+              (print-code x))
+            (let ([x (pass x)])
+              (when (and show? (show-codgen))
+              ;(when (show-codgen)
+                (printf "Out: \n")
+                (print-code x))
+              (loop (cdr passes) x))))))
+  (let* ([x (run-passes x (list
+                            introduce-primcalls
+                            eliminate-fix
+                            insert-engine-checks
+                            insert-stack-overflow-check
+                            specify-representation
+                            impose-calling-convention/evaluation-order
+                            )
+              #t)]
+         [x (run-passes x (list
+                            assign-frame-sizes
+                            color-by-chaitin
+                            )
+              #f)])
+    (let ([ls (flatten-codes x)])
+      ls)))
+                    
   
 
 #|module alt-cogen|#)
