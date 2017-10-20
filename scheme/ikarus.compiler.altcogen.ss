@@ -54,7 +54,15 @@
     ;;; TODO
     (struct-case x
       [(constant c) `(quote ,c)]
-      [(var name) name]
+      [(var name reg-conf frm-conf var-conf reg-move frm-move var-move
+         loc index ref gloc) `(var ,name ,loc ,gloc)]
+      [(fvar index) `(fvar ,index)]
+      [(disp s0 s1) `(disp ,(Expr s0) ,(Expr s1))]
+      [(object x)
+       `(object ,(Expr x))]
+      [(nframe vars live body)
+       `(nframe ,(map Expr vars) ,(Expr live) ,(Expr body))]
+
       [(primref name) `(primref ,name)]
       [(bind lhs* rhs* expr)
        `(let ,(map list (map Expr lhs*) (map Expr rhs*)) ,(Expr expr))]
@@ -74,8 +82,6 @@
        `(primcall ,name ,@(map Expr e*))]
       [(shortcut body handler)
        `(shortcut ,(Expr body) ,(Expr handler))]
-      [(object x)
-       x]
       [(closure code free* wk?)
        `(closure ,(Expr code) ,(map Expr free*) ,wk?)]
       ;[else `(??? ,x)]))
@@ -884,7 +890,9 @@
       [(codes code* body)
        (make-codes (map Clambda code*) (Main body))]))
   ;;;
-;  (print-code x)
+  (when (show-codgen)
+    (printf "before impose-calling-conventions\n")
+    (print-code x))
   (Program x))
 
 (module ListySet 
@@ -1288,6 +1296,15 @@
     (define (for-each-nfv s f) 
       (for-each f s))))
 
+;;; vs, fs, ns, rs are live vars
+;;; for example, if you have
+;;; 
+;;; L1:  r1 <- r2 + r3
+;;; L2:  r2 <- r3 + r4
+;;; L3:  r1 <- r2 + 5
+;;; and live(L3) = {r1}, then 
+;;; live(L2) = {r2, r1}
+;;; live(L1) = {r2}
 (define (uncover-frame-conflicts x varvec)
   (import IntegerSet)
   (import conflict-helpers)
@@ -2077,11 +2094,14 @@
         [else (error who "invalid tail" (unparse x))]))
     (define exception-live-set (make-parameter #f))
     (let ([s (T x)])
-      ;(pretty-print (unparse x))
-      ;(print-graph g)
+      (when (show-codgen)
+        (printf "build-graph\n")
+        (pretty-print (unparse x))
+        (print-graph g))
       g))
   ;;;
   (define (color-graph sp* un* g)
+    ;;; for un*, find out whose #neighbors < #all-registers
     (define (find-low-degree ls g)
       (cond
         [(null? ls) #f]
@@ -2118,6 +2138,7 @@
              (let ([r (find-color un n* env)])
                (values spills sp*
                   (cons (cons un r) env))))))]
+      ;; we can alloc a register for it
       [(find-low-degree (set->list sp*) g) =>
        (lambda (sp)
          (let ([n* (node-neighbors sp g)])
@@ -2127,7 +2148,9 @@
              (let ([r (find-color sp n* env)])
                (values spills (set-add sp sp*)
                   (cons (cons sp r) env))))))]
+      ;; we can't simply alloc one ...
       [(pair? (set->list sp*))
+       ;; if we can't find one, then we just choose the first one...
        (let ([sp (car (set->list sp*))])
          (let ([n* (node-neighbors sp g)])
            (delete-node! sp g)
@@ -2137,6 +2160,7 @@
                (if r
                    (values spills (set-add sp sp*)
                        (cons (cons sp r) env))
+                   ;; if we can't color it, add it to spills
                    (values (cons sp spills) sp* env))))))]
       [else (error 'color-graph "whoaaa")]))
   ;;;
@@ -3042,7 +3066,8 @@
   (Program x))
 
 (define (print-code x)
-  (parameterize ([print-gensym 'pretty])
+  ;(parameterize ([print-gensym 'pretty])
+  (parameterize ([print-gensym #t])
     (pretty-print (unparse x))))
 
 (define (alt-cogen x)
@@ -3057,12 +3082,12 @@
           (let ([pass (car passes)])
             (when (and show? (show-codgen))
             ;(when (show-codgen)
-              (printf "In: \n")
+              (printf "In ~s: \n" pass)
               (print-code x))
             (let ([x (pass x)])
               (when (and show? (show-codgen))
               ;(when (show-codgen)
-                (printf "Out: \n")
+                (printf "Out ~s: \n" pass)
                 (print-code x))
               (loop (cdr passes) x))))))
   (let* ([x (run-passes x (list
@@ -3072,10 +3097,10 @@
                             insert-stack-overflow-check
                             specify-representation
                             impose-calling-convention/evaluation-order
+                            assign-frame-sizes
                             )
               #t)]
          [x (run-passes x (list
-                            assign-frame-sizes
                             color-by-chaitin
                             )
               #f)])

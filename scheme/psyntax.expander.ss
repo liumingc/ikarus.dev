@@ -2724,6 +2724,7 @@
   (define (local-macro-transformer x)
     (car x))
 
+  (define macro-counter 0)
   (define (do-macro-call transformer expr r rib)
     (define (return x)
       (let f ((x x))
@@ -2733,28 +2734,45 @@
             ((pair? x) (f (car x)) (f (cdr x)))
             ((vector? x) (vector-for-each f x))
             ((symbol? x) 
-             (syntax-violation #f 
-               "raw symbol encountered in output of macro"
-               expr x)))))
+              (syntax-violation #f 
+                "raw symbol encountered in output of macro"
+                expr x)))))
       (add-mark (gen-mark) rib x expr))
-    (let ((x (transformer (add-mark anti-mark #f expr #f))))
-      (if (procedure? x) 
-          (return 
-            (x (lambda (id)
-                 (unless (id? id) 
-                   (assertion-violation 'rho "not an identifier" id))
-                 (let ([label (id->label id)])
-                   (let ([binding (label->binding label r)])
-                     (case (car binding)
-                       [(local-ctv) (cadr binding)]
-                       [(global-ctv) 
-                        (let ([lib (cadr binding)]
-                              [loc (cddr binding)])
-                          (unless (eq? lib '*interaction*)
-                            (visit-library lib))
-                          (symbol-value loc))]
-                       [else #f]))))))
-          (return x))))
+    (let ([ir (add-mark anti-mark #f expr #f)]
+          [counter macro-counter])
+      (set! macro-counter (+ macro-counter 1))
+      (when (show-expand)
+        (display (format "MACRO [IN~a]:~%" counter))
+        ;(pretty-print ir)
+        (display ir)
+        (newline))
+      (let ([x (transformer ir)])
+        ;(let ((x (transformer (add-mark anti-mark #f expr #f))))
+        (let ([xr
+                (if (procedure? x) 
+                    (return 
+                      (x (lambda (id)
+                           (unless (id? id) 
+                             (assertion-violation 'rho "not an identifier" id))
+                           (let ([label (id->label id)])
+                             (let ([binding (label->binding label r)])
+                               (case (car binding)
+                                 [(local-ctv) (cadr binding)]
+                                 [(global-ctv) 
+                                   (let ([lib (cadr binding)]
+                                          [loc (cddr binding)])
+                                     (unless (eq? lib '*interaction*)
+                                       (visit-library lib))
+                                     (symbol-value loc))]
+                                 [else #f]))))))
+                    (return x))])
+          (when (show-expand)
+            (display (format "MACRO [OUT~a]:~%" counter))
+            ;(pretty-print or)
+            (display xr)
+            (newline))
+          xr
+          ))))
 
   ;;; chi procedures
   (define (chi-macro p e r rib)
@@ -2800,8 +2818,8 @@
 
   (define chi-expr
     (lambda (e r mr)
-      (if (show-expand)
-          (display (format "chi-expr:i: ~a~%" e)))
+      ;(if (show-expand)
+          ;(display (format "chi-expr:i: ~a~%" e)))
       (let-values (((type value kwd) (syntax-type e r)))
         (case type
           ((core-macro)
