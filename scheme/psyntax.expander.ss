@@ -54,9 +54,35 @@
     (psyntax config)
     (psyntax internal)
     (only (rnrs syntax-case) syntax-case syntax with-syntax)
+    (only (ikarus) pretty-print print-gensym printf)
     (prefix (rnrs syntax-case) sys.))
   
   (define show-expand (make-parameter #f))
+
+  (define (pretty-expr ir)
+    (define prettify
+      (lambda (ir)
+        (cond
+          [(pair? ir)
+            (let ([x (car ir)])
+              (if (symbol? x)
+                  (case x
+                    [(primitive)
+                      (string->symbol (string-append "%" (symbol->string (cadr ir))))]
+                    [(annotated-call)
+                      ; skip annotation
+                      (cons 'annotated-call (pretty* (cddr ir)))]
+                    [else (pretty* ir)])
+                  (pretty* ir)))]
+          [else ir])))
+    (define pretty*
+      (lambda (lst)
+        (if (pair? lst)
+            (cons (prettify (car lst)) (pretty* (cdr lst)))
+            lst)))
+    (pretty-print (prettify ir)))
+
+  ;(define pretty-expr pretty-print)
 
   (define (set-cons x ls)
     (cond
@@ -279,6 +305,10 @@
     (lambda (x p wr)
       (display "#<syntax " p)
       (write (stx->datum x) p)
+      (when (show-expand)
+        (display " [" p)
+        (for-each (lambda (m) (display m p) (display #\space p)) (stx-mark* x))
+        (display "] " p))
       (let ((expr (stx-expr x)))
         (when (annotation? expr) 
           (let ((src (annotation-source expr)))
@@ -337,14 +367,14 @@
   ;;; of one char (this assumes that strings are mutable)).
   
   ;;; gen-mark generates a new unique mark
-  (define (gen-mark) ;;; faster
-    (string #\m))
+  ;(define (gen-mark) ;;; faster
+  ;  (string #\m))
   
-  ;(define gen-mark ;;; useful for debugging
-  ;  (let ((i 0))
-  ;    (lambda () 
-  ;      (set! i (+ i 1))
-  ;      (string-append "m." (number->string i)))))
+  (define gen-mark ;;; useful for debugging
+    (let ((i 0))
+      (lambda () 
+        (set! i (+ i 1))
+        (string-append "m." (number->string i)))))
   
   ;;; We use #f as the anti-mark.
   (define anti-mark #f)
@@ -389,6 +419,7 @@
           (if (and (pair? ls1) (pair? ls2) (not (car ls2)))
               (cancel ls1 ls2)
               (append ls1 ls2))))
+      ;;; cancel '(a b c) '(d e f) => '(a b e f)
       (define cancel
         (lambda (ls1 ls2)
           (let f ((x (car ls1)) (ls1 (cdr ls1)))
@@ -439,7 +470,12 @@
           [(pair? e)
            (let ([a (f (car e) m s1* ae*)] 
                  [d (f (cdr e) m s1* ae*)])
-             (if (eq? a d) e (cons a d)))]
+             ;; i think here is a typo error.
+             ;; should be:
+             ;; (if (and (eq? a (car e)) (eq? d (cdr e))) e (cons a d))
+             ;(if (eq? a d) e (cons a d))
+             (if (for-all eq? e (cons a d)) e (cons a d))
+             )]
           [(vector? e) 
            (let ([ls1 (vector->list e)])
              (let ([ls2 (map (lambda (x) (f x m s1* ae*)) ls1)])
@@ -752,13 +788,15 @@
   (define (raise-unbound-error id) 
     (syntax-violation* #f "unbound identifier" id 
       (make-undefined-violation)))
-  #;
+
   (define (syntax-type e r)
     (let-values ([(t0 t1 t2) (syntax-type^ e r)])
-      (printf "T ~s ~s => ~s ~s ~s\n" e r t0 t1 t2)
+      #;
+      (when (show-expand)
+        (printf "T ~s ~s => ~s ~s ~s\n" e r t0 t1 t2))
       (values t0 t1 t2)))
 
-  (define syntax-type
+  (define syntax-type^
     (lambda (e r)
       (cond
         ((id? e)
@@ -2365,6 +2403,16 @@
       lits))
 
   (define syntax-case-transformer
+    (lambda (e r mr)
+      (let ([ir (syntax-case-transformer^ e r mr)])
+        (when (show-expand)
+          (printf "input of syntax-case\n")
+          (pretty-print e)
+          (printf "output of syntax-case\n")
+          (pretty-print ir))
+        ir)))
+
+  (define syntax-case-transformer^
     (let ()
       (define build-dispatch-call
         (lambda (pvars expr y r mr)
@@ -2492,6 +2540,10 @@
             (id (id? id)
              (let* ((label (id->label e))
                     (b (label->binding label r)))
+                 ;; if binding-type is 'syntax,
+                 ;; then it's a syntax-variable. for e.g
+                 ;; ``` [(_ x y) #'y] ```
+                 ;; x and y are syntax-variables
                  (if (eq? (binding-type b) 'syntax)
                      (let-values (((var maps)
                                    (let ((var.lev (binding-value b)))
@@ -2536,8 +2588,26 @@
              (let-values (((lsnew maps)
                            (gen-syntax src ls r maps ellipsis? #t)))
                (values (gen-vector e ls lsnew) maps)))
-            (_ (values `(quote ,e) maps)))))
+            (_
+             (begin
+               #;
+               (when (show-expand)
+                 (display "constant ")
+                 (pretty-print e)
+                 (newline))
+               (values `(quote ,e) maps))))))
+      ;; maps is 
+      ;; lev5-map lev4-map lev3-map ...
+      ;; where lev<n>-map is assoc-list
       (define gen-ref
+        (lambda (src var level maps)
+          (let-values ([(ir maps) (gen-ref^ src var level maps)])
+            #;
+            (when (show-expand)
+              (printf "gen-ref ~s => ~s\n" var ir))
+            (values ir maps))))
+
+      (define gen-ref^
         (lambda (src var level maps)
           (if (= level 0)
               (values var maps)
@@ -2549,6 +2619,8 @@
                       ((assq outer-var (car maps)) =>
                        (lambda (b) (values (cdr b) maps)))
                       (else
+                       ;; it's only when <a> is in ellipsis form will it
+                       ;; generate tmp name
                        (let ((inner-var (gen-lexical 'tmp)))
                          (values
                            inner-var
@@ -2581,6 +2653,20 @@
                  `(map (primitive ,(car e)) . ,args)))
               (else (cons* 'map (list 'lambda formals e) actuals))))))
       (define gen-cons
+        (lambda (e x y xnew ynew)
+          (let ([ir (gen-cons^ e x y xnew ynew)])
+            #;
+            (when (show-expand)
+              (display "gen-cons IN ")
+              (pretty-print xnew)
+              (display ", ")
+              (pretty-print ynew)
+              (display "OUT ")
+              (pretty-print ir)
+              (newline))
+            ir)))
+
+      (define gen-cons^
         (lambda (e x y xnew ynew)
           (case (car ynew)
             ((quote)
@@ -2624,7 +2710,15 @@
         (syntax-match e ()
           ((_ x)
            (let-values (((e maps) (gen-syntax e x r '() ellipsis? #f)))
-             (regen e)))))))
+             (let ([ir (regen e)])
+               #;
+               (when (show-expand)
+                 (display "gen-syntax ")
+                 (pretty-print e)
+                 (display " => ")
+                 (pretty-print ir))
+               ir)
+             ))))))
   
   (define core-macro-transformer
     (lambda (name)
@@ -2737,15 +2831,17 @@
               (syntax-violation #f 
                 "raw symbol encountered in output of macro"
                 expr x)))))
+      ;; the last expr is annotation
       (add-mark (gen-mark) rib x expr))
     (let ([ir (add-mark anti-mark #f expr #f)]
           [counter macro-counter])
       (set! macro-counter (+ macro-counter 1))
       (when (show-expand)
-        (display (format "MACRO [IN~a]:~%" counter))
-        ;(pretty-print ir)
-        (display ir)
-        (newline))
+        (parameterize ([print-gensym 'pretty])
+          (display (format "MACRO [IN~a]:~%" counter))
+          ;(pretty-print ir)
+          (display ir)
+          (newline)))
       (let ([x (transformer ir)])
         ;(let ((x (transformer (add-mark anti-mark #f expr #f))))
         (let ([xr
@@ -2767,10 +2863,11 @@
                                  [else #f]))))))
                     (return x))])
           (when (show-expand)
-            (display (format "MACRO [OUT~a]:~%" counter))
-            ;(pretty-print or)
-            (display xr)
-            (newline))
+            (parameterize ([print-gensym #t])
+              (display (format "MACRO [OUT~a]:~%" counter))
+              ;(pretty-print xr)
+              (display xr)
+              (newline)))
           xr
           ))))
 
@@ -2818,9 +2915,22 @@
 
   (define chi-expr
     (lambda (e r mr)
-      ;(if (show-expand)
-          ;(display (format "chi-expr:i: ~a~%" e)))
+      (let ([x (chi-expr^ e r mr)])
+        (when (show-expand)
+          (display "chi-expr ")
+          (pretty-print e)
+          (display " => ")
+          (pretty-expr x)
+          (newline)
+          )
+        x)))
+
+  (define chi-expr^
+    (lambda (e r mr)
       (let-values (((type value kwd) (syntax-type e r)))
+        #;
+        (when (show-expand)
+          (printf "syntax-type of ~s is type value kwd: ~s ~s ~s\n" e type value kwd))
         (case type
           ((core-macro)
            (let ((transformer (core-macro-transformer value)))
@@ -3173,6 +3283,7 @@
                               (cons (cons lab (cons '$module iface)) mr)
                               mod** kwd*)))))))))
 
+  ;; handle define, define-syntax, begin, library/module etc in body*
   (define chi-body*
     (lambda (e* r mr lex* rhs* mod** kwd* exp* rib mix? sd?)
       (cond
@@ -3180,6 +3291,9 @@
         (else
          (let ((e (car e*)))
            (let-values (((type value kwd) (syntax-type e r)))
+             #;
+             (when (show-expand)
+               (printf "chi-body* ~s => ~s ~s ~s\n" e type value kwd))
              (let ((kwd* (if (id? kwd) (cons kwd kwd*) kwd*)))
                (case type
                  ((define)
@@ -3676,6 +3790,9 @@
       (let-values (((e* r mr lex* rhs* mod** _kwd* _exp*)
                     (chi-body* (list e) r r '() '() '() '() '() rib
                                #t #f)))
+        (when (show-expand)
+          (printf "chi-interaction-expr e* lex* rhs* ~s ~s ~s\n"
+            e* lex* rhs*))
         (let ((e* (expand-interaction-rhs*/init* 
                     (reverse lex*) (reverse rhs*) 
                     (append (apply append (reverse mod**)) e*)
